@@ -1,15 +1,19 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from schemas import (
     ActivityHighlight,
     FactsResponse,
     HighlightsResponse,
+    HeatmapPoint,
     SummaryResponse,
     TrendPoint,
     TrendsResponse,
     DailyPoint,
+    WrappedActivity,
+    WrappedKeyStat,
+    WrappedResponse,
 )
 
 
@@ -30,6 +34,24 @@ def _seconds_to_hours(seconds: float) -> float:
 
 def _seconds_to_minutes(seconds: float) -> float:
     return round(seconds / 60, 2)
+
+
+def _format_number(value: float, unit: str) -> str:
+    return f"{value:,.0f} {unit}" if isinstance(value, (int, float)) else f"{value} {unit}"
+
+
+def _build_wrapped_activity(activity: Dict[str, Any]) -> WrappedActivity:
+    return WrappedActivity(
+        id=activity.get("id", 0),
+        name=activity.get("name", "Activity"),
+        date=_parse_activity_date(activity).date().isoformat(),
+        type=activity.get("type", "Ride"),
+        distance_km=_meters_to_km(activity.get("distance", 0)),
+        elevation_m=round(activity.get("total_elevation_gain", 0), 2),
+        moving_time_minutes=_seconds_to_minutes(activity.get("moving_time", 0)),
+        kudos_count=activity.get("kudos_count"),
+        strava_url=f"https://www.strava.com/activities/{activity.get('id')}",
+    )
 
 
 def _filter_by_type(activities: List[Dict[str, Any]], activity_type: str) -> List[Dict[str, Any]]:
@@ -280,3 +302,246 @@ def compute_facts(summary: SummaryResponse) -> FactsResponse:
         f"Active on {summary.active_days_percent}% of days this year."
     )
     return FactsResponse(facts=facts)
+
+
+def compute_wrapped(
+    activities: List[Dict[str, Any]],
+    activity_type: str = "All",
+    tokens: Optional[Dict[str, Any]] = None,
+) -> WrappedResponse:
+    year = datetime.utcnow().year
+    filtered: List[Dict[str, Any]] = []
+    for a in activities:
+        date_obj = _parse_activity_date(a)
+        if date_obj.year != year:
+            continue
+        if activity_type != "All" and a.get("type") != activity_type:
+            continue
+        filtered.append(a)
+
+    if not filtered:
+        return WrappedResponse(
+            year=year,
+            key_stats=[],
+            total_distance_km=0.0,
+            total_time_hours=0.0,
+            total_elevation_m=0.0,
+            activities_count=0,
+            active_days=0,
+            longest_streak_days=0,
+            most_active_month=None,
+            most_active_weekday=None,
+            biggest_day=None,
+            longest_activity=None,
+            biggest_climb=None,
+            most_kudos_activity=None,
+            top_kudos_givers=[],
+            favourite_partners=[],
+            cumulative_distance=[],
+            monthly_distance=[],
+            time_of_day_distribution=[],
+            heatmap_points=[],
+            fun_lines=[],
+        )
+
+    total_distance = sum(a.get("distance", 0) for a in filtered)
+    total_elevation = sum(a.get("total_elevation_gain", 0) for a in filtered)
+    total_time = sum(a.get("moving_time", 0) for a in filtered)
+
+    dates = [_parse_activity_date(a).date() for a in filtered]
+    unique_days = sorted(set(dates))
+    longest_streak = _longest_streak(unique_days)
+
+    day_distance: Dict[datetime.date, float] = defaultdict(float)
+    weekday_distance: Dict[int, float] = defaultdict(float)
+    month_distance: Dict[str, float] = defaultdict(float)
+    daily_moving_time: Dict[datetime.date, float] = defaultdict(float)
+    daily_elevation: Dict[datetime.date, float] = defaultdict(float)
+
+    for a, day in zip(filtered, dates):
+        dist = a.get("distance", 0)
+        day_distance[day] += dist
+        weekday_distance[day.weekday()] += dist
+        month_label = day.strftime("%Y-%m")
+        month_distance[month_label] += dist
+        daily_moving_time[day] += a.get("moving_time", 0)
+        daily_elevation[day] += a.get("total_elevation_gain", 0)
+
+    most_active_month_label, _ = _max_item(month_distance)
+    weekday_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    most_active_weekday = None
+    if weekday_distance:
+        top_weekday = max(weekday_distance, key=weekday_distance.get)
+        most_active_weekday = weekday_names[top_weekday]
+
+    # Biggest day aggregate
+    biggest_day_date, biggest_day_distance = _max_item({d: dist for d, dist in day_distance.items()})
+    biggest_day_activity = None
+    if biggest_day_date:
+        day_acts = [a for a in filtered if _parse_activity_date(a).date() == biggest_day_date]
+        aggregate = {
+            "id": day_acts[0].get("id", 0) if day_acts else 0,
+            "name": f"Big day {biggest_day_date.isoformat()}",
+            "start_date_local": biggest_day_date.isoformat(),
+            "type": day_acts[0].get("type") if day_acts else "Ride",
+            "distance": biggest_day_distance,
+            "moving_time": sum(a.get("moving_time", 0) for a in day_acts),
+            "total_elevation_gain": sum(a.get("total_elevation_gain", 0) for a in day_acts),
+            "kudos_count": sum(a.get("kudos_count", 0) or 0 for a in day_acts),
+        }
+        biggest_day_activity = _build_wrapped_activity(aggregate)
+
+    longest_activity = None
+    if filtered:
+        longest_raw = max(filtered, key=lambda a: a.get("distance", 0))
+        longest_activity = _build_wrapped_activity(longest_raw)
+
+    biggest_climb = None
+    if filtered:
+        climb_raw = max(filtered, key=lambda a: a.get("total_elevation_gain", 0))
+        biggest_climb = _build_wrapped_activity(climb_raw)
+
+    most_kudos_activity = None
+    kudos_candidates = [a for a in filtered if a.get("kudos_count")]
+    if kudos_candidates:
+        kudos_raw = max(kudos_candidates, key=lambda a: a.get("kudos_count", 0))
+        most_kudos_activity = _build_wrapped_activity(kudos_raw)
+
+    cumulative_distance = []
+    running_total = 0.0
+    for day in sorted(day_distance):
+        distance_km = _meters_to_km(day_distance[day])
+        running_total += distance_km
+        cumulative_distance.append(
+            {
+                "date": day.isoformat(),
+                "distance_km": round(distance_km, 2),
+                "cumulative_distance_km": round(running_total, 2),
+            }
+        )
+
+    monthly_distance_list = [
+        {"month": label, "distance_km": _meters_to_km(dist)}
+        for label, dist in sorted(month_distance.items())
+    ]
+
+    time_of_day_buckets = {"Morning": 0, "Afternoon": 0, "Evening": 0, "Night": 0}
+    for a in filtered:
+        hour = _parse_activity_date(a).hour
+        if 5 <= hour < 11:
+            time_of_day_buckets["Morning"] += 1
+        elif 11 <= hour < 17:
+            time_of_day_buckets["Afternoon"] += 1
+        elif 17 <= hour < 22:
+            time_of_day_buckets["Evening"] += 1
+        else:
+            time_of_day_buckets["Night"] += 1
+    time_of_day_distribution = [
+        {"label": label, "count": count} for label, count in time_of_day_buckets.items()
+    ]
+
+    heatmap_counter: Counter[tuple] = Counter()
+    for a in filtered:
+        latlng = a.get("start_latlng")
+        if latlng and isinstance(latlng, (list, tuple)) and len(latlng) >= 2:
+            lat = round(float(latlng[0]), 2)
+            lng = round(float(latlng[1]), 2)
+            heatmap_counter[(lat, lng)] += 1
+    heatmap_points = [
+        HeatmapPoint(lat=lat, lng=lng, count=count)
+        for (lat, lng), count in heatmap_counter.items()
+    ]
+
+    top_kudos_givers: List[Dict[str, Any]] = []
+    favourite_partners: List[Dict[str, Any]] = []
+    if tokens and kudos_candidates:
+        try:
+            from strava_client import StravaError, fetch_activity_kudos
+
+            kudos_counts: Counter[str] = Counter()
+            candidate_subset = sorted(
+                kudos_candidates, key=lambda a: a.get("kudos_count", 0), reverse=True
+            )[:5]
+            for activity in candidate_subset:
+                try:
+                    kudos_list = fetch_activity_kudos(tokens.get("access_token"), activity.get("id"))
+                except StravaError:
+                    continue
+                for giver in kudos_list:
+                    name = f"{giver.get('firstname', '')} {giver.get('lastname', '')}".strip() or "Friend"
+                    kudos_counts[name] += 1
+            top_kudos_givers = [
+                {"name": name, "count": count}
+                for name, count in kudos_counts.most_common(3)
+            ]
+            favourite_partners = top_kudos_givers[:]
+        except Exception:
+            top_kudos_givers = []
+            favourite_partners = []
+
+    total_distance_km = _meters_to_km(total_distance)
+    total_time_hours = _seconds_to_hours(total_time)
+    total_elevation_m = round(total_elevation, 2)
+    activities_count = len(filtered)
+    active_days = len(set(unique_days))
+
+    key_stats = [
+        WrappedKeyStat(
+            label="Total distance",
+            value=total_distance_km,
+            unit="km",
+            formatted=_format_number(total_distance_km, "km"),
+        ),
+        WrappedKeyStat(
+            label="Total elevation",
+            value=total_elevation_m,
+            unit="m",
+            formatted=_format_number(total_elevation_m, "m"),
+        ),
+        WrappedKeyStat(
+            label="Moving time",
+            value=total_time_hours,
+            unit="h",
+            formatted=_format_number(total_time_hours, "h"),
+        ),
+        WrappedKeyStat(
+            label="Activities",
+            value=activities_count,
+            unit="activities",
+            formatted=_format_number(activities_count, "activities"),
+        ),
+    ]
+
+    fun_lines = [
+        f"You travelled {total_distance_km:,.0f} km in {year} – that's {round((total_distance_km/40075)*100, 1)}% of Earth's circumference.",
+        f"Your biggest day was {round(_meters_to_km(biggest_day_distance), 2)} km on {biggest_day_date.isoformat() if biggest_day_date else 'N/A'}.",
+        f"{most_active_weekday or 'Your week'} was your most active weekday.",
+    ]
+    if most_kudos_activity:
+        fun_lines.append(
+            f"You earned {most_kudos_activity.kudos_count or 0} kudos on your most cheered activity."
+        )
+
+    return WrappedResponse(
+        year=year,
+        key_stats=key_stats,
+        total_distance_km=total_distance_km,
+        total_time_hours=total_time_hours,
+        total_elevation_m=total_elevation_m,
+        activities_count=activities_count,
+        active_days=active_days,
+        longest_streak_days=longest_streak,
+        most_active_month=most_active_month_label,
+        most_active_weekday=most_active_weekday,
+        biggest_day=biggest_day_activity,
+        longest_activity=longest_activity,
+        biggest_climb=biggest_climb,
+        most_kudos_activity=most_kudos_activity,
+        top_kudos_givers=top_kudos_givers,
+        favourite_partners=favourite_partners,
+        cumulative_distance=cumulative_distance,
+        monthly_distance=monthly_distance_list,
+        time_of_day_distribution=time_of_day_distribution,
+        heatmap_points=heatmap_points,
+        fun_lines=fun_lines,
+    )

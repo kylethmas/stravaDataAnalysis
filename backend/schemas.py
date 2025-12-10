@@ -66,3 +66,58 @@ class HighlightsResponse(BaseModel):
 
 class FactsResponse(BaseModel):
     facts: List[str]
+
+
+class WrappedKeyStat(BaseModel):
+    label: str
+    value: float | int
+    unit: str
+    formatted: str
+
+
+class WrappedActivity(BaseModel):
+    id: int
+    name: str
+    date: str
+    type: str
+    distance_km: float
+    elevation_m: float
+    moving_time_minutes: float
+    kudos_count: Optional[int] = None
+    strava_url: str
+
+
+class HeatmapPoint(BaseModel):
+    lat: float
+    lng: float
+    count: int
+
+
+class WrappedResponse(BaseModel):
+    year: int
+    key_stats: List[WrappedKeyStat]
+
+    total_distance_km: float
+    total_time_hours: float
+    total_elevation_m: float
+    activities_count: int
+    active_days: int
+    longest_streak_days: int
+    most_active_month: Optional[str]
+    most_active_weekday: Optional[str]
+
+    biggest_day: Optional[WrappedActivity]
+    longest_activity: Optional[WrappedActivity]
+    biggest_climb: Optional[WrappedActivity]
+    most_kudos_activity: Optional[WrappedActivity]
+
+    top_kudos_givers: List[Dict[str, Any]]
+    favourite_partners: List[Dict[str, Any]]
+
+    cumulative_distance: List[Dict[str, Any]]
+    monthly_distance: List[Dict[str, Any]]
+    time_of_day_distribution: List[Dict[str, Any]]
+
+    heatmap_points: List[HeatmapPoint]
+
+    fun_lines: List[str]

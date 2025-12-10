@@ -17,6 +17,7 @@ const NavBar: React.FC = () => {
           <NavLink to="/calendar">Calendar</NavLink>
           <NavLink to="/trends">Trends</NavLink>
           <NavLink to="/highlights">Highlights</NavLink>
+          <NavLink to="/wrapped">Wrapped</NavLink>
           <select
             value={activityType}
             onChange={(e) => setActivityType(e.target.value)}

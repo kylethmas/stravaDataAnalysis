@@ -7,6 +7,7 @@ import requests
 STRAVA_AUTH_URL = "https://www.strava.com/oauth/authorize"
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
+STRAVA_ACTIVITY_KUDOS_URL = "https://www.strava.com/api/v3/activities/{activity_id}/kudos"
 
 
 class StravaError(Exception):
@@ -95,3 +96,23 @@ def ensure_fresh_token(tokens: Dict[str, Any]) -> Dict[str, Any]:
             "expires_at": refreshed.get("expires_at"),
         }
     return tokens
+
+
+def fetch_activity_kudos(access_token: str, activity_id: int) -> List[Dict[str, Any]]:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    page = 1
+    kudos: List[Dict[str, Any]] = []
+    while True:
+        params = {"per_page": 100, "page": page}
+        url = STRAVA_ACTIVITY_KUDOS_URL.format(activity_id=activity_id)
+        resp = requests.get(url, headers=headers, params=params, timeout=20)
+        if resp.status_code == 401:
+            raise StravaError("Unauthorized when fetching kudos.")
+        if resp.status_code != 200:
+            raise StravaError(f"Error fetching kudos: {resp.text}")
+        data = resp.json()
+        if not data:
+            break
+        kudos.extend(data)
+        page += 1
+    return kudos
