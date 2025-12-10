@@ -2,6 +2,12 @@
 
 A web app that connects to Strava, pulls your past year's activities, and turns them into an interactive yearbook of stats, trends, personal records, and fun facts. The project is split into a FastAPI backend and a React/Vite frontend.
 
+<img width="2515" height="1289" alt="image" src="https://github.com/user-attachments/assets/0ab7275d-836e-41be-b78f-7efb9d43e954" />
+<img width="2501" height="1145" alt="image" src="https://github.com/user-attachments/assets/33e99037-e5bf-48ea-8a0c-0e15b605caae" />
+<img width="2511" height="1297" alt="image" src="https://github.com/user-attachments/assets/f6dab474-31f6-408c-80d2-bd284b9f97e9" />
+<img width="2492" height="1246" alt="image" src="https://github.com/user-attachments/assets/6a2a68ab-577c-4659-87e4-72b784ef83d0" />
+
+
 ## Features
 - OAuth link to Strava that exchanges the authorization code for access/refresh tokens and caches activities in-memory per session.
 - Summary statistics (distance, elevation, time, active days, streaks, epic days) computed from the retrieved activities.
