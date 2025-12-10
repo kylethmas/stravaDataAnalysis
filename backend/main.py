@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import Cookie, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,7 +34,7 @@ SESSION_COOKIE_NAME = "codex_session"
 
 
 @app.get("/api/session")
-def get_or_create_session(response: Response, codex_session: str | None = Cookie(default=None)):
+def get_or_create_session(response: Response, codex_session: Optional[str] = Cookie(default=None)):
     if codex_session and codex_session in CACHE:
         return {"session_id": codex_session}
 

@@ -43,7 +43,7 @@ Set the following variables for the backend (FastAPI) process:
    ```bash
    cd backend
    python -m venv .venv
-   source .venv/bin/activate
+   source .venv/bin/activate or .\.venv\Scripts\Activate.ps1
    ```
 2. Install dependencies.
    ```bash

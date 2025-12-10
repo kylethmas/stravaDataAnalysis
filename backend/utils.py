@@ -117,7 +117,10 @@ def compute_trends(activities: List[Dict[str, Any]]) -> TrendsResponse:
         moving_time = a.get("moving_time", 0)
         elevation = a.get("total_elevation_gain", 0)
 
-        week_label = f"{date.isocalendar().year}-W{date.isocalendar().week:02d}"
+        # Python 3.8 returns a tuple from isocalendar; 3.9+ returns a namedtuple with attributes.
+        iso = date.isocalendar()
+        iso_year, iso_week = (iso[0], iso[1]) if isinstance(iso, tuple) else (iso.year, iso.week)
+        week_label = f"{iso_year}-W{iso_week:02d}"
         month_label = date.strftime("%Y-%m")
         day_label = date.strftime("%Y-%m-%d")
 
