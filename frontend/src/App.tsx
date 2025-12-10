@@ -4,6 +4,7 @@ import DashboardPage from './routes/DashboardPage'
 import CalendarPage from './routes/CalendarPage'
 import TrendsPage from './routes/TrendsPage'
 import HighlightsPage from './routes/HighlightsPage'
+import WrappedPage from './routes/WrappedPage'
 import NavBar from './components/NavBar'
 import { StravaDataProvider } from './context/StravaDataContext'
 
@@ -17,6 +18,7 @@ function App() {
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/trends" element={<TrendsPage />} />
         <Route path="/highlights" element={<HighlightsPage />} />
+        <Route path="/wrapped" element={<WrappedPage />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </StravaDataProvider>

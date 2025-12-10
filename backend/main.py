@@ -15,6 +15,7 @@ from schemas import (
     HighlightsResponse,
     SummaryResponse,
     TrendsResponse,
+    WrappedResponse,
 )
 from strava_client import (
     StravaError,
@@ -29,6 +30,7 @@ from utils import (
     compute_highlights,
     compute_summary,
     compute_trends,
+    compute_wrapped,
 )
 
 
@@ -61,6 +63,16 @@ def get_session_id(request: Request) -> str:
     if not session_id or session_id not in CACHE:
         raise HTTPException(status_code=401, detail="Session not found")
     return session_id
+
+
+def _get_session_tokens(request: Request) -> Dict[str, Any]:
+    session_id = get_session_id(request)
+    tokens = CACHE[session_id].get("tokens")
+    if not tokens:
+        raise HTTPException(status_code=401, detail="Not connected to Strava")
+    fresh_tokens = ensure_fresh_token(tokens)
+    CACHE[session_id]["tokens"] = fresh_tokens
+    return fresh_tokens
 
 
 @app.get("/api/auth/strava/url")
@@ -105,6 +117,9 @@ def auth_callback(request: Request, code: str):
             "moving_time": a.get("moving_time"),
             "total_elevation_gain": a.get("total_elevation_gain"),
             "average_speed": a.get("average_speed"),
+            "kudos_count": a.get("kudos_count"),
+            "start_latlng": a.get("start_latlng"),
+            "athlete_count": a.get("athlete_count"),
         }
         for a in activities
     ]
@@ -118,12 +133,7 @@ def auth_callback(request: Request, code: str):
 
 def _get_activities_for_session(request: Request) -> List[Dict[str, Any]]:
     session_id = get_session_id(request)
-    tokens = CACHE[session_id].get("tokens")
-    if not tokens:
-        raise HTTPException(status_code=401, detail="Not connected to Strava")
-
-    fresh_tokens = ensure_fresh_token(tokens)
-    CACHE[session_id]["tokens"] = fresh_tokens
+    _get_session_tokens(request)
     activities = CACHE[session_id].get("activities", [])
     if activities is None:
         activities = []
@@ -160,6 +170,16 @@ def facts(request: Request, activity_type: str = "All"):
     summary_res = compute_summary(activities, activity_type=activity_type)
     result = compute_facts(summary_res)
     CACHE[get_session_id(request)]["facts"] = result.dict()
+    return result
+
+
+@app.get("/api/wrapped", response_model=WrappedResponse)
+def wrapped(request: Request, activity_type: str = "All"):
+    session_id = get_session_id(request)
+    tokens = _get_session_tokens(request)
+    activities = CACHE[session_id].get("activities", []) or []
+    result = compute_wrapped(activities, activity_type=activity_type, tokens=tokens)
+    CACHE[session_id]["wrapped"] = result.dict()
     return result
 
 
