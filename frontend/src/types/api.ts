@@ -10,6 +10,7 @@ export interface SummaryResponse {
   longest_streak_days: number
   most_epic_day_date?: string | null
   most_epic_day_distance_km?: number | null
+  activity_type: string
 }
 
 export interface TrendPoint {
@@ -18,6 +19,7 @@ export interface TrendPoint {
   moving_time_hours: number
   elevation_m: number
   activities_count: number
+  activity_ids: number[]
 }
 
 export interface DailyPoint {
@@ -25,12 +27,16 @@ export interface DailyPoint {
   distance_km: number
   moving_time_minutes: number
   activities_count: number
+  activity_ids: number[]
 }
 
 export interface TrendsResponse {
   weekly: TrendPoint[]
   monthly: TrendPoint[]
   daily: DailyPoint[]
+  weekday_stats: { weekday: string; count: number; distance_km: number }[]
+  most_active_weekday?: string | null
+  activity_type: string
 }
 
 export interface ActivityHighlight {
@@ -41,6 +47,9 @@ export interface ActivityHighlight {
   elevation_m: number
   moving_time_minutes: number
   type: string
+  strava_url: string
+  average_speed_kmh?: number | null
+  pace_min_per_km?: number | null
 }
 
 export interface HighlightsResponse {
@@ -48,6 +57,7 @@ export interface HighlightsResponse {
   biggest_climbs: ActivityHighlight[]
   fastest_runs: ActivityHighlight[]
   fastest_rides: ActivityHighlight[]
+  activity_type: string
 }
 
 export interface FactsResponse {

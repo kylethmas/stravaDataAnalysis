@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { FactsResponse, HighlightsResponse, SummaryResponse, TrendsResponse } from '../types/api'
+import { ActivityHighlight, FactsResponse, HighlightsResponse, SummaryResponse, TrendsResponse } from '../types/api'
 
 interface StravaDataContextType {
   summary?: SummaryResponse
@@ -8,7 +8,11 @@ interface StravaDataContextType {
   facts?: string[]
   loading: boolean
   error?: string
+  activityType: string
+  setActivityType: (value: string) => void
   refresh: () => Promise<void>
+  fetchDayActivities: (date: string) => Promise<ActivityHighlight[]>
+  fetchPeriodActivities: (start: string, end: string) => Promise<ActivityHighlight[]>
 }
 
 const StravaDataContext = createContext<StravaDataContextType | undefined>(undefined)
@@ -29,16 +33,17 @@ export const StravaDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [facts, setFacts] = useState<string[]>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const [activityType, setActivityType] = useState<string>('All')
 
   const load = async () => {
     setLoading(true)
     setError(undefined)
     try {
       const [s, t, h, f] = await Promise.all([
-        fetchJson<SummaryResponse>('http://localhost:8000/api/summary'),
-        fetchJson<TrendsResponse>('http://localhost:8000/api/trends'),
-        fetchJson<HighlightsResponse>('http://localhost:8000/api/highlights'),
-        fetchJson<FactsResponse>('http://localhost:8000/api/facts'),
+        fetchJson<SummaryResponse>(`http://localhost:8000/api/summary?activity_type=${activityType}`),
+        fetchJson<TrendsResponse>(`http://localhost:8000/api/trends?activity_type=${activityType}`),
+        fetchJson<HighlightsResponse>(`http://localhost:8000/api/highlights?activity_type=${activityType}`),
+        fetchJson<FactsResponse>(`http://localhost:8000/api/facts?activity_type=${activityType}`),
       ])
       setSummary(s)
       setTrends(t)
@@ -53,10 +58,30 @@ export const StravaDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   useEffect(() => {
     load()
-  }, [])
+  }, [activityType])
+
+  const fetchDayActivities = (date: string) =>
+    fetchJson<ActivityHighlight[]>(`http://localhost:8000/api/day/${date}?activity_type=${activityType}`)
+
+  const fetchPeriodActivities = (start: string, end: string) =>
+    fetchJson<ActivityHighlight[]>(`http://localhost:8000/api/period?start=${start}&end=${end}&activity_type=${activityType}`)
 
   return (
-    <StravaDataContext.Provider value={{ summary, trends, highlights, facts, loading, error, refresh: load }}>
+    <StravaDataContext.Provider
+      value={{
+        summary,
+        trends,
+        highlights,
+        facts,
+        loading,
+        error,
+        refresh: load,
+        activityType,
+        setActivityType,
+        fetchDayActivities,
+        fetchPeriodActivities,
+      }}
+    >
       {children}
     </StravaDataContext.Provider>
   )
