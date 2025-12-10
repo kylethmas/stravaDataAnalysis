@@ -9,7 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from cache import CACHE, init_session, update_last_fetched
-from schemas import FactsResponse, HighlightsResponse, SummaryResponse, TrendsResponse
+from schemas import (
+    ActivityHighlight,
+    FactsResponse,
+    HighlightsResponse,
+    SummaryResponse,
+    TrendsResponse,
+)
 from strava_client import (
     StravaError,
     build_auth_url,
@@ -17,7 +23,13 @@ from strava_client import (
     exchange_code_for_token,
     fetch_activities,
 )
-from utils import compute_facts, compute_highlights, compute_summary, compute_trends
+from utils import (
+    build_activity_highlight,
+    compute_facts,
+    compute_highlights,
+    compute_summary,
+    compute_trends,
+)
 
 
 app = FastAPI(title="Strava Year in Review")
@@ -82,7 +94,22 @@ def auth_callback(request: Request, code: str):
     except StravaError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    CACHE[session_id]["activities"] = activities
+    simplified = [
+        {
+            "id": a.get("id"),
+            "name": a.get("name"),
+            "type": a.get("type"),
+            "start_date_local": a.get("start_date_local") or a.get("start_date"),
+            "start_date": a.get("start_date"),
+            "distance": a.get("distance"),
+            "moving_time": a.get("moving_time"),
+            "total_elevation_gain": a.get("total_elevation_gain"),
+            "average_speed": a.get("average_speed"),
+        }
+        for a in activities
+    ]
+
+    CACHE[session_id]["activities"] = simplified
     update_last_fetched(session_id)
 
     frontend_url = "http://localhost:5173/"
@@ -104,36 +131,74 @@ def _get_activities_for_session(request: Request) -> List[Dict[str, Any]]:
 
 
 @app.get("/api/summary", response_model=SummaryResponse)
-def summary(request: Request):
+def summary(request: Request, activity_type: str = "All"):
     activities = _get_activities_for_session(request)
-    result = compute_summary(activities)
+    result = compute_summary(activities, activity_type=activity_type)
     CACHE[get_session_id(request)]["summary"] = result.dict()
     return result
 
 
 @app.get("/api/trends", response_model=TrendsResponse)
-def trends(request: Request):
+def trends(request: Request, activity_type: str = "All"):
     activities = _get_activities_for_session(request)
-    result = compute_trends(activities)
+    result = compute_trends(activities, activity_type=activity_type)
     CACHE[get_session_id(request)]["trends"] = result.dict()
     return result
 
 
 @app.get("/api/highlights", response_model=HighlightsResponse)
-def highlights(request: Request):
+def highlights(request: Request, activity_type: str = "All"):
     activities = _get_activities_for_session(request)
-    result = compute_highlights(activities)
+    result = compute_highlights(activities, activity_type=activity_type)
     CACHE[get_session_id(request)]["highlights"] = result.dict()
     return result
 
 
 @app.get("/api/facts", response_model=FactsResponse)
-def facts(request: Request):
+def facts(request: Request, activity_type: str = "All"):
     activities = _get_activities_for_session(request)
-    summary_res = compute_summary(activities)
+    summary_res = compute_summary(activities, activity_type=activity_type)
     result = compute_facts(summary_res)
     CACHE[get_session_id(request)]["facts"] = result.dict()
     return result
+
+
+@app.get("/api/day/{date}", response_model=List[ActivityHighlight])
+def activities_for_day(request: Request, date: str, activity_type: str = "All"):
+    activities = _get_activities_for_session(request)
+    day_activities: List[Dict[str, Any]] = []
+    for a in activities:
+        date_str = a.get("start_date_local") or a.get("start_date")
+        if not date_str:
+            continue
+        if date_str.split("T")[0] == date:
+            day_activities.append(a)
+    if activity_type != "All":
+        day_activities = [a for a in day_activities if a.get("type") == activity_type]
+    return [build_activity_highlight(a) for a in day_activities]
+
+
+@app.get("/api/period", response_model=List[ActivityHighlight])
+def activities_for_period(request: Request, start: str, end: str, activity_type: str = "All"):
+    activities = _get_activities_for_session(request)
+    try:
+        start_date = datetime.fromisoformat(start).date()
+        end_date = datetime.fromisoformat(end).date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date format") from exc
+
+    period_activities: List[Dict[str, Any]] = []
+    for a in activities:
+        date_str = a.get("start_date_local") or a.get("start_date")
+        if not date_str:
+            continue
+        activity_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
+        if start_date <= activity_date <= end_date:
+            period_activities.append(a)
+
+    if activity_type != "All":
+        period_activities = [a for a in period_activities if a.get("type") == activity_type]
+    return [build_activity_highlight(a) for a in period_activities]
 
 
 @app.exception_handler(StravaError)

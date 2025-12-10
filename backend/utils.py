@@ -14,7 +14,10 @@ from schemas import (
 
 
 def _parse_activity_date(activity: Dict[str, Any]) -> datetime:
-    return datetime.fromisoformat(activity.get("start_date").replace("Z", "+00:00"))
+    date_str = activity.get("start_date_local") or activity.get("start_date")
+    if not date_str:
+        return datetime.utcnow()
+    return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
 
 
 def _meters_to_km(meters: float) -> float:
@@ -29,8 +32,37 @@ def _seconds_to_minutes(seconds: float) -> float:
     return round(seconds / 60, 2)
 
 
-def compute_summary(activities: List[Dict[str, Any]]) -> SummaryResponse:
-    if not activities:
+def _filter_by_type(activities: List[Dict[str, Any]], activity_type: str) -> List[Dict[str, Any]]:
+    if not activity_type or activity_type == "All":
+        return activities
+    return [a for a in activities if a.get("type") == activity_type]
+
+
+def build_activity_highlight(activity: Dict[str, Any]) -> ActivityHighlight:
+    avg_speed_ms = activity.get("average_speed")
+    avg_speed_kmh = round(avg_speed_ms * 3.6, 2) if avg_speed_ms else None
+    pace_min_per_km = None
+    if avg_speed_ms and avg_speed_ms > 0:
+        pace_min_per_km = round((1000 / avg_speed_ms) / 60, 2)
+
+    return ActivityHighlight(
+        id=activity.get("id", 0),
+        name=activity.get("name", "Activity"),
+        date=_parse_activity_date(activity).date().isoformat(),
+        distance_km=_meters_to_km(activity.get("distance", 0)),
+        elevation_m=round(activity.get("total_elevation_gain", 0), 2),
+        moving_time_minutes=_seconds_to_minutes(activity.get("moving_time", 0)),
+        type=activity.get("type", "Ride"),
+        strava_url=f"https://www.strava.com/activities/{activity.get('id')}",
+        average_speed_kmh=avg_speed_kmh,
+        pace_min_per_km=pace_min_per_km,
+    )
+
+
+def compute_summary(activities: List[Dict[str, Any]], activity_type: str = "All") -> SummaryResponse:
+    filtered = _filter_by_type(activities, activity_type)
+
+    if not filtered:
         return SummaryResponse(
             total_distance_km=0.0,
             total_elevation_m=0.0,
@@ -43,13 +75,14 @@ def compute_summary(activities: List[Dict[str, Any]]) -> SummaryResponse:
             longest_streak_days=0,
             most_epic_day_date=None,
             most_epic_day_distance_km=None,
+            activity_type=activity_type,
         )
 
-    total_distance = sum(a.get("distance", 0) for a in activities)
-    total_elevation = sum(a.get("total_elevation_gain", 0) for a in activities)
-    total_time = sum(a.get("moving_time", 0) for a in activities)
+    total_distance = sum(a.get("distance", 0) for a in filtered)
+    total_elevation = sum(a.get("total_elevation_gain", 0) for a in filtered)
+    total_time = sum(a.get("moving_time", 0) for a in filtered)
 
-    dates = [_parse_activity_date(a).date() for a in activities]
+    dates = [_parse_activity_date(a).date() for a in filtered]
     unique_days = set(dates)
 
     today = datetime.utcnow().date()
@@ -58,7 +91,7 @@ def compute_summary(activities: List[Dict[str, Any]]) -> SummaryResponse:
 
     monthly_distance: Dict[str, float] = defaultdict(float)
     day_distance: Dict[datetime.date, float] = defaultdict(float)
-    for a, d in zip(activities, dates):
+    for a, d in zip(filtered, dates):
         label = d.strftime("%Y-%m")
         monthly_distance[label] += a.get("distance", 0)
         day_distance[d] += a.get("distance", 0)
@@ -81,6 +114,7 @@ def compute_summary(activities: List[Dict[str, Any]]) -> SummaryResponse:
         longest_streak_days=longest_streak,
         most_epic_day_date=most_epic_date.isoformat() if most_epic_date else None,
         most_epic_day_distance_km=_meters_to_km(most_epic_distance) if most_epic_distance else None,
+        activity_type=activity_type,
     )
 
 
@@ -106,18 +140,21 @@ def _longest_streak(days: List[datetime.date]) -> int:
     return longest
 
 
-def compute_trends(activities: List[Dict[str, Any]]) -> TrendsResponse:
-    weekly: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    monthly: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    daily: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+def compute_trends(activities: List[Dict[str, Any]], activity_type: str = "All") -> TrendsResponse:
+    filtered = _filter_by_type(activities, activity_type)
 
-    for a in activities:
+    weekly: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict(float))
+    monthly: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict(float))
+    daily: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict(float))
+    weekday_totals: Dict[int, Dict[str, float]] = defaultdict(lambda: {"count": 0, "distance": 0.0})
+
+    for a in filtered:
         date = _parse_activity_date(a)
         distance = a.get("distance", 0)
         moving_time = a.get("moving_time", 0)
         elevation = a.get("total_elevation_gain", 0)
+        activity_id = a.get("id")
 
-        # Python 3.8 returns a tuple from isocalendar; 3.9+ returns a namedtuple with attributes.
         iso = date.isocalendar()
         iso_year, iso_week = (iso[0], iso[1]) if isinstance(iso, tuple) else (iso.year, iso.week)
         week_label = f"{iso_year}-W{iso_week:02d}"
@@ -129,6 +166,11 @@ def compute_trends(activities: List[Dict[str, Any]]) -> TrendsResponse:
             group[label]["moving_time"] += moving_time
             group[label]["elevation"] += elevation
             group[label]["count"] += 1
+            if activity_id is not None:
+                group[label].setdefault("activity_ids", []).append(activity_id)
+
+        weekday_totals[date.weekday()]["count"] += 1
+        weekday_totals[date.weekday()]["distance"] += distance
 
     weekly_points = [
         TrendPoint(
@@ -137,6 +179,7 @@ def compute_trends(activities: List[Dict[str, Any]]) -> TrendsResponse:
             moving_time_hours=_seconds_to_hours(v.get("moving_time", 0)),
             elevation_m=round(v.get("elevation", 0), 2),
             activities_count=int(v.get("count", 0)),
+            activity_ids=[int(i) for i in v.get("activity_ids", [])],
         )
         for k, v in sorted(weekly.items())
     ]
@@ -147,6 +190,7 @@ def compute_trends(activities: List[Dict[str, Any]]) -> TrendsResponse:
             moving_time_hours=_seconds_to_hours(v.get("moving_time", 0)),
             elevation_m=round(v.get("elevation", 0), 2),
             activities_count=int(v.get("count", 0)),
+            activity_ids=[int(i) for i in v.get("activity_ids", [])],
         )
         for k, v in sorted(monthly.items())
     ]
@@ -156,35 +200,47 @@ def compute_trends(activities: List[Dict[str, Any]]) -> TrendsResponse:
             distance_km=_meters_to_km(v.get("distance", 0)),
             moving_time_minutes=_seconds_to_minutes(v.get("moving_time", 0)),
             activities_count=int(v.get("count", 0)),
+            activity_ids=[int(i) for i in v.get("activity_ids", [])],
         )
         for k, v in sorted(daily.items())
     ]
 
-    return TrendsResponse(weekly=weekly_points, monthly=monthly_points, daily=daily_points)
+    weekday_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    weekday_stats = [
+        {
+            "weekday": weekday_names[idx],
+            "count": int(vals.get("count", 0)),
+            "distance_km": _meters_to_km(vals.get("distance", 0)),
+        }
+        for idx, vals in weekday_totals.items()
+    ]
+    most_active_weekday = None
+    if weekday_stats:
+        most_active_weekday = max(weekday_stats, key=lambda w: (w["distance_km"], w["count"]))["weekday"]
+
+    return TrendsResponse(
+        weekly=weekly_points,
+        monthly=monthly_points,
+        daily=daily_points,
+        weekday_stats=weekday_stats,
+        most_active_weekday=most_active_weekday,
+        activity_type=activity_type,
+    )
 
 
-def compute_highlights(activities: List[Dict[str, Any]], top_n: int = 5) -> HighlightsResponse:
-    def map_highlight(a: Dict[str, Any]) -> ActivityHighlight:
-        return ActivityHighlight(
-            id=a.get("id", 0),
-            name=a.get("name", "Activity"),
-            date=_parse_activity_date(a).date().isoformat(),
-            distance_km=_meters_to_km(a.get("distance", 0)),
-            elevation_m=round(a.get("total_elevation_gain", 0), 2),
-            moving_time_minutes=_seconds_to_minutes(a.get("moving_time", 0)),
-            type=a.get("type", "Ride"),
-        )
+def compute_highlights(activities: List[Dict[str, Any]], top_n: int = 5, activity_type: str = "All") -> HighlightsResponse:
+    filtered = _filter_by_type(activities, activity_type) if activity_type != "All" else activities
 
-    longest = sorted(activities, key=lambda a: a.get("distance", 0), reverse=True)[:top_n]
-    climbs = sorted(activities, key=lambda a: a.get("total_elevation_gain", 0), reverse=True)[:top_n]
+    longest = sorted(filtered, key=lambda a: a.get("distance", 0), reverse=True)[:top_n]
+    climbs = sorted(filtered, key=lambda a: a.get("total_elevation_gain", 0), reverse=True)[:top_n]
 
-    runs = [a for a in activities if a.get("type") == "Run" and a.get("distance", 0) > 3000]
+    runs = [a for a in filtered if a.get("type") == "Run" and a.get("distance", 0) > 3000]
     runs_sorted = sorted(
         runs,
         key=lambda a: a.get("moving_time", 1) / max(a.get("distance", 1), 1),
     )[:top_n]
 
-    rides = [a for a in activities if a.get("type") == "Ride" and a.get("distance", 0) > 5000]
+    rides = [a for a in filtered if a.get("type") == "Ride" and a.get("distance", 0) > 5000]
     rides_sorted = sorted(
         rides,
         key=lambda a: (a.get("distance", 1) / 1000) / max(a.get("moving_time", 1) / 3600, 0.1),
@@ -192,10 +248,11 @@ def compute_highlights(activities: List[Dict[str, Any]], top_n: int = 5) -> High
     )[:top_n]
 
     return HighlightsResponse(
-        longest_activities=[map_highlight(a) for a in longest],
-        biggest_climbs=[map_highlight(a) for a in climbs],
-        fastest_runs=[map_highlight(a) for a in runs_sorted],
-        fastest_rides=[map_highlight(a) for a in rides_sorted],
+        longest_activities=[build_activity_highlight(a) for a in longest],
+        biggest_climbs=[build_activity_highlight(a) for a in climbs],
+        fastest_runs=[build_activity_highlight(a) for a in runs_sorted],
+        fastest_rides=[build_activity_highlight(a) for a in rides_sorted],
+        activity_type=activity_type,
     )
 
 
